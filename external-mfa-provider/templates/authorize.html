@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>External MFA Lab</title>
+</head>
+<body>
+    <h1>External MFA Lab</h1>
+    <p>LAB ONLY: this button is not a real authentication factor.</p>
+    <p>The Entra ID token hint signature, issuer, audience, and tenant were validated.</p>
+    <p>Hint expiry is intentionally not enforced, as required by the External MFA protocol.</p>
+
+    <h2>Verified identity</h2>
+    <dl>
+        <dt>Tenant (tid)</dt><dd>{{ hint.tid }}</dd>
+        <dt>Subject (sub)</dt><dd>{{ hint.sub }}</dd>
+        <dt>User object (oid)</dt><dd>{{ hint.oid }}</dd>
+    </dl>
+
+    <h2>Authorization request</h2>
+    <dl>
+        <dt>client_id</dt><dd>{{ parameters.client_id }}</dd>
+        <dt>redirect_uri</dt><dd>{{ parameters.redirect_uri }}</dd>
+        <dt>nonce (returned unchanged in the response token)</dt>
+        <dd>{{ parameters.get("nonce", "(not supplied)") }}</dd>
+        <dt>state (returned unchanged in the response form)</dt>
+        <dd>{{ parameters.get("state", "(not supplied)") }}</dd>
+    </dl>
+    <h2>Requested claims (including acr / amr if supplied)</h2>
+    <pre>{{ requested_claims | tojson(indent=2) }}</pre>
+
+    <p>LAB ONLY: approval simulates acr={{ lab_acr }} and amr=["{{ lab_amr }}"].
+       No OTP is performed. Do not use this provider for real accounts or resources.</p>
+    <form method="post" action="{{ url_for('approve') }}">
+        <input type="hidden" name="transaction_id" value="{{ transaction_id }}">
+        <button type="submit">Approve MFA (LAB ONLY)</button>
+    </form>
+    <p>Approve within four minutes. The approval can only be used once.</p>
+</body>
+</html>

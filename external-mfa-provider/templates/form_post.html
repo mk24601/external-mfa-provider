@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Returning lab MFA result</title>
+</head>
+<body>
+    <h1>Returning lab MFA result to Microsoft Entra ID</h1>
+    <p>LAB ONLY: the result simulates an OTP factor. No OTP was performed.</p>
+    <form id="mfa-response" method="post" action="{{ redirect_uri }}">
+        <input type="hidden" name="id_token" value="{{ id_token }}">
+        {% if state is not none %}
+        <input type="hidden" name="state" value="{{ state }}">
+        {% endif %}
+        <button type="submit">Continue to Microsoft Entra ID</button>
+    </form>
+    <script>
+        document.getElementById("mfa-response").submit();
+    </script>
+</body>
+</html>
