@@ -12,6 +12,8 @@ Azure App Service（Linux）上のPython / FlaskをExternal MFAプロバイダ�
 
 概要は [README.md](./README.md) を参照してください。この文書では構築・検証の具体的な手順を説明します。
 
+App Serviceの操作は**Azure PortalのGUI**を基本とし、Azure CLIは使用しません。Python環境の準備、OpenSSLによる鍵生成、ローカルテスト、HTTP要求の確認にはPCのPowerShellを使用します。
+
 > **重要: 本物のMFAプロバイダーではありません。**
 >
 > ボタンを押すだけで、実際には行っていないOTPを模擬した成功応答を返します。個人検証用・破棄可能なラボ専用です。実業務のリソース、通常ユーザー、管理者、緊急アクセス用アカウントをこの方式で保護しないでください。
@@ -101,7 +103,8 @@ Microsoft Entra ID
 - テストユーザーだけを含むグループ。例: `External-MFA-Lab-Testers`。
 - Windows / PowerShell / VS Code。
 - Python、pip、Windowsの `curl.exe`。
-- ZIPデプロイにAzure CLIを使用する場合は、最新のAzure CLI。本書のコマンドはローカルPowerShell用です。
+- 鍵と証明書の生成に使うOpenSSL 3以降。PowerShellから `openssl` を実行できること。
+- Azure Portalにアクセスできるブラウザー。App Serviceの作成・設定・ZIPデプロイにAzure CLIは不要です。
 - 条件付きアクセスでMFA要求を作る場合は、対象ユーザーに適切なMicrosoft Entra ID P1以上、または同機能を含むライセンス。
 
 Microsoftの料金・ライセンス・ポータル画面・地域ごとのランタイム提供状況は変わります。使用前に末尾の公式資料と契約を確認してください。本書のライセンス記載は、特に条件付きアクセスを使う検証の前提です。
@@ -213,24 +216,14 @@ $DiscoveryEndpoint = "$BaseUri/.well-known/openid-configuration"
 
 ホスト名には `https://` や末尾の `/` を含めません。
 
-### 3.3 Azure CLIを使用できることを確認
+### 3.3 Portalで作成先とアクセスを確認する
 
-後のデプロイに使用します。Azure Cloud Shellではなく、コードを置いたローカルPCのPowerShellで実行してください。
+1. Azure Portal右上のアカウントメニューや**ディレクトリとサブスクリプション**で、作業対象のディレクトリを確認します。
+2. 作成したApp Serviceの**概要**で、サブスクリプション、リソースグループ、App Serviceプラン、既定ドメインを確認します。
+3. **参照（Browse）**を押し、ブラウザーでHTTPSの既定ドメインが開くことを確認します。
+4. この時点では、Azureの既定ページが表示されれば構いません。サンプルコードは第9章でデプロイします。
 
-```powershell
-az version
-az login --tenant $TenantId
-az account set --subscription $SubscriptionId
-az account show --query "{subscription:id, tenant:tenantId}" --output table
-```
-
-表示されたサブスクリプションとテナントを確認します。組織の制約で通常のログインが使えない場合は、認められたログイン手段を使用してください。
-
-任意で実際のホスト名をCLIでも確認できます。
-
-```powershell
-az webapp show --resource-group $ResourceGroup --name $AppName --query defaultHostName --output tsv
-```
+この後の設定・デプロイも、このApp ServiceのPortal画面から操作します。Azure CLIやCloud Shellへのログインは不要です。
 
 **チェックポイント:** Webアプリ、プラン、リソースグループが作成され、実際のHTTPSホスト名が分かること。この時点の既定ページは、Flaskアプリの起動成功を意味しません。
 
@@ -422,58 +415,68 @@ $env:ENTRA_CLIENT_ID = $ClientId
 
 `private.pemm` / `cert.pemm` のような別名では起動しません。Windowsエクスプローラーでは拡張子を表示して確認してください。
 
-次のコマンドはPythonのcryptographyを使います。OpenSSLの別途インストールは不要です。RSA 2048ビット、365日有効の自己署名証明書を生成します。
+次の手順ではOpenSSLを使い、RSA 2048ビットの秘密鍵と、365日有効の自己署名証明書を生成します。
 
 この証明書はJWKSの公開鍵コンテナーです。App ServiceのHTTPSサーバー証明書とは別物であり、App ServiceのTLS設定にアップロードしません。
 
-### 7.2 生成コマンド
+### 7.2 OpenSSLを確認する
 
-プロジェクトディレクトリで実行します。既存ファイルがある場合は上書きせず停止します。
+PowerShellで次を実行します。
 
 ```powershell
-@'
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
-
-private_path = Path("private.pem")
-cert_path = Path("cert.pem")
-if private_path.exists() or cert_path.exists():
-    raise SystemExit("Key or certificate already exists. Do not overwrite an active lab key.")
-
-key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-name = x509.Name([
-    x509.NameAttribute(NameOID.COMMON_NAME, "External MFA Lab Signing")
-])
-now = datetime.now(timezone.utc)
-certificate = (
-    x509.CertificateBuilder()
-    .subject_name(name)
-    .issuer_name(name)
-    .public_key(key.public_key())
-    .serial_number(x509.random_serial_number())
-    .not_valid_before(now - timedelta(minutes=5))
-    .not_valid_after(now + timedelta(days=365))
-    .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-    .sign(key, hashes.SHA256())
-)
-with private_path.open("xb") as output:
-    output.write(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    ))
-with cert_path.open("xb") as output:
-    output.write(certificate.public_bytes(serialization.Encoding.PEM))
-print("Created private.pem and cert.pem. Keep the private key secret.")
-'@ | .\.venv\Scripts\python.exe -
+openssl version
 ```
 
-本書の鍵はパスフレーズなしです。これもラボ用の簡略化です。
+OpenSSL 3以降のバージョンが表示されることを確認します。コマンドが見つからない場合は、組織で許可された入手元からOpenSSLをインストールし、実行ファイルのあるフォルダーをPATHに追加してください。PATHを変更した場合はターミナルを開き直します。
+
+Pythonの `cryptography` パッケージをインストールしただけでは、OpenSSLのコマンドラインツールが使えるとは限りません。
+
+### 7.3 鍵と証明書を生成する
+
+プロジェクトディレクトリで、以下をひとまとまりで実行します。既存ファイルがある場合は上書きせず停止します。
+
+```powershell
+if ((Test-Path -LiteralPath .\private.pem) -or (Test-Path -LiteralPath .\cert.pem)) {
+    throw "Key or certificate already exists. Do not overwrite an active lab key."
+}
+
+openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -noenc `
+  -keyout .\private.pem `
+  -out .\cert.pem `
+  -subj "/CN=External MFA Lab Signing" `
+  -addext "basicConstraints=critical,CA:FALSE"
+
+if ($LASTEXITCODE -ne 0) {
+    throw "OpenSSL failed. Check the error output before continuing."
+}
+```
+
+この例は**PowerShell用**です。行の継続にはバッククォートを使い、その後にスペースを入れないでください。
+
+| オプション | 意味 |
+|---|---|
+| `req -x509` | 証明書署名要求だけでなく、自己署名証明書を生成 |
+| `-newkey rsa:2048` | 新しいRSA 2048ビット鍵を生成 |
+| `-sha256` | 証明書の署名にSHA-256を使用 |
+| `-days 365` | 証明書の有効期間を365日に設定 |
+| `-noenc` | 秘密鍵をパスフレーズで暗号化しない |
+| `-keyout` / `-out` | 秘密鍵 / 証明書の出力先 |
+| `-subj` | 証明書のSubject。対話入力を省略 |
+| `-addext` | CA証明書ではないことを明示 |
+
+`-noenc` はOpenSSL 3以降の指定です。従来の `-nodes` も同じ目的の旧オプションですが、OpenSSL 3では非推奨となっているため、本書では `-noenc` を使います。
+
+本書の鍵はパスフレーズなしです。これはラボ用の簡略化であり、現行アプリもパスフレーズなしの秘密鍵を読み込む構成です。
+
+### 7.4 生成結果を確認する
+
+```powershell
+Get-Item -LiteralPath .\private.pem, .\cert.pem | Select-Object Name, Length
+openssl pkey -in .\private.pem -check -noout
+openssl x509 -in .\cert.pem -noout -subject -issuer -dates
+```
+
+両ファイルの存在、秘密鍵の正常性、証明書のSubject・Issuer・有効期間を確認します。秘密鍵の本文を表示する必要はありません。鍵と証明書の公開鍵が一致することは、次章の自動テストとアプリ起動時にも確認されます。
 
 > 元のデプロイZIPや他人の秘密鍵を再利用しないでください。また、一度Entraで使い始めた鍵を気軽に再生成しないでください。Entraのメタデータ／公開鍵キャッシュにより、新旧鍵の不一致が起こり得ます。
 
@@ -572,7 +575,9 @@ HTTP/1.1 400 BAD REQUEST
 
 ### 9.1 App Serviceの設定
 
-Azure PortalのApp Serviceで、**設定 → 環境変数**などの画面から次を追加し、適用します。
+1. Azure Portalで対象のApp Serviceを開きます。
+2. 左メニューの**設定 → 環境変数（Environment variables）**を開きます。UIによっては**構成 → アプリケーション設定**にあります。
+3. **アプリ設定（App settings）**で**追加（Add / New application setting）**を押し、次の名前と値を1つずつ入力して確定します。
 
 | 名前 | 値 |
 |---|---|
@@ -580,49 +585,38 @@ Azure PortalのApp Serviceで、**設定 → 環境変数**などの画面から
 | `ENTRA_TENANT_ID` | 自分のテナントGUID |
 | `ENTRA_CLIENT_ID` | 自分のアプリ登録のClient ID |
 
-CLIでも設定できます。第2・3・5章の変数が入ったPowerShellを使います。
-
-```powershell
-az webapp config appsettings set `
-  --resource-group $ResourceGroup `
-  --name $AppName `
-  --settings "SCM_DO_BUILD_DURING_DEPLOYMENT=true" "ENTRA_TENANT_ID=$TenantId" "ENTRA_CLIENT_ID=$ClientId"
-```
+4. 画面の**適用（Apply）／保存（Save）**を押し、再起動や変更確認が表示されたら承認します。
+5. 保存完了後、3項目が登録されていることを確認します。Portalの入力欄には `$TenantId` や `$ClientId` という変数名ではなく、**実際のGUID**を入力してください。
 
 ZIPソースをOryxでビルドする方式です。別方式の `WEBSITE_RUN_FROM_PACKAGE` と混在させないでください。既存設定がある環境では、それがこのラボに必要なものか確認します。
 
 ### 9.2 起動コマンド
 
-App Serviceの**構成 / スタック設定 / 全般設定**などの画面にあるStartup Commandへ、次を設定します。
+1. App Serviceの**設定 → 構成（Configuration）**を開きます。
+2. **スタック設定（Stack settings）／全般設定（General settings）**などにある**起動コマンド（Startup Command）**を探します。Portalのバージョンにより配置が異なる場合があります。
+3. 次のコマンドを1行で入力します。
 
 ```text
 gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120 --access-logfile - --error-logfile - app:app
 ```
 
-CLIで設定する場合:
-
-```powershell
-az webapp config set `
-  --resource-group $ResourceGroup `
-  --name $AppName `
-  --startup-file "gunicorn --bind 0.0.0.0:8000 --workers 1 --timeout 120 --access-logfile - --error-logfile - app:app"
-```
+4. **適用／保存**し、変更確認が出たら承認します。
 
 `app:app` は「`app.py` 内のFlaskオブジェクト `app`」を指します。Azure上では `python app.py` の開発サーバーを起動しません。
 
+これはApp Serviceに保存する起動設定です。ローカルPowerShellやCloud ShellでこのGunicornコマンドを実行する手順ではありません。
+
 ### 9.3 ZIPの作成
 
-プロジェクトディレクトリで実行します。
+Windowsエクスプローラーで作成する場合:
 
-```powershell
-$DeploymentZip = Join-Path (Split-Path -Parent (Get-Location).Path) "external-mfa-provider-deploy.zip"
-Compress-Archive `
-  -Path .\app.py, .\requirements.txt, .\private.pem, .\cert.pem, .\templates `
-  -DestinationPath $DeploymentZip `
-  -Force
-```
+1. プロジェクトの `external-mfa-provider` フォルダーを開きます。
+2. **`app.py`、`requirements.txt`、`private.pem`、`cert.pem`、`templates` フォルダー**だけを選択します。
+3. 右クリックして**ZIPファイルに圧縮する**を選択します。Windowsのバージョンによっては**送る → 圧縮（zip形式）フォルダー**です。
+4. ZIPを `external-mfa-provider-deploy.zip` などの名前にします。
+5. ZIPを開き、次の構造になっていることを確認します。
 
-このコマンドは、指定したデプロイ用ZIPを上書きします。同じ名前の別の成果物がないことを確認してください。
+**外側の `external-mfa-provider` フォルダーそのものを圧縮しないでください。** 必要なのは、その中の上記5項目です。既存のZIPを選択対象に含めないようにします。
 
 ZIPの直下を次の構造にします。
 
@@ -647,27 +641,43 @@ ZIPは秘密鍵を含むため、安全な場所に保管し、自分のApp Serv
 
 ### 9.4 ZIPをデプロイ
 
-本書では、Linuxでも再現しやすいAzure CLI方式を基本とします。
+#### Azure PortalのDeployment Centerからアップロード
 
-```powershell
-az webapp deploy `
-  --resource-group $ResourceGroup `
-  --name $AppName `
-  --src-path $DeploymentZip `
-  --type zip
-```
+1. Azure Portalで対象のLinux App Serviceを開きます。
+2. 左メニューの**デプロイ → デプロイセンター（Deployment Center）**を開きます。
+3. **Manual Deployment (Push)** を選択します。
+4. ソースとして **Publish files (new)** を選択します。
+5. **Browse files** で作成したZIPを選択するか、アップロード領域にZIPをドラッグ＆ドロップします。
+6. 表示されるパッケージ内容を確認します。`app.py` と `requirements.txt` が直下にあり、鍵ペアとテンプレート2つが含まれていることを確認します。
+7. **サーバー側ビルドを実行する設定**にします。**Skip server-side build** が表示された場合は、**チェックを入れません**。
+8. **Deploy** を押します。
+9. アップロード、ビルド、デプロイの各段階が完了するまで待ちます。
+10. 成功の表示とデプロイログを確認し、第10章のHTTPSアクセス確認へ進みます。
 
-コマンドの終了結果とApp Serviceのデプロイログを確認します。サーバー側で依存パッケージがインストールされ、アプリが起動するまで待ちます。
+PythonパッケージはAzureのLinux環境でインストールします。ローカルWindowsの `.venv` をZIPに入れて、ビルドをスキップする方法にはしません。
 
-**Portal経由について:** 元の検証ではPortalからZIPをアップロードしましたが、表示されるUIは環境・時期で異なります。公式資料では、従来のKudu **Tools → Zip Push Deploy** UIはLinuxでは使用できないと記載されています。Linuxでその画面がない／動かない場合は、上記CLI方式を使ってください。
+#### Deployment Centerにアップロード項目が表示されない場合
 
-最新のAzure CLIは `az webapp deploy` でEntra認証を利用できます。ZIPデプロイのためだけにBasic認証を有効化することを、本書の標準手順にはしていません。
+Microsoft App Serviceチームの2026年7月の案内では、上記の新しいPortal操作が説明されています。画面の展開状況や既存のデプロイ設定によって見え方が異なる場合は、次のGUI経路も確認します。
+
+1. App Serviceの**開発ツール → 高度なツール（Advanced Tools）→ 移動（Go）**を押します。
+2. 開いたKudu/SCMサイトで、新しい **Deployments** 画面を開きます。
+3. ZIPを選択し、内容を確認して、**サーバー側ビルドをスキップせず**にDeployします。
+
+これは従来の **Tools → Zip Push Deploy** とは別の新しい画面です。従来のZip Push Deploy UIはLinux非対応と記載されているため、そちらを使用しません。
+
+新しい画面もない、アクセス拒否になる、組織のネットワーク制限がある場合は、画面の内容と権限・SCMサイトへのアクセス可否を管理者と確認してください。既存のCI/CD設定を無断で変更したり、Basic認証を有効にして回避したりせず、この段階で切り分けます。
+
+公式の画面説明: [PortalからのZIPデプロイ](https://azure.github.io/AppService/2026/07/30/quick-deploy-portal.html)、[新しいDeployments画面とビルド設定](https://azure.github.io/AppService/2026/04/06/quickdeploy.html)。
 
 ### 9.5 ログ
 
-Portalの**監視 → ログストリーム**を開きます。必要に応じてApp Serviceログのアプリケーションログを有効にしてください。
+1. Deployment Centerのデプロイ結果／ログで、ビルドとデプロイが成功したことを確認します。
+2. App Serviceの**監視 → ログストリーム（Log stream）**を開きます。新しいデプロイ画面にRuntime logsが表示される場合は、そちらでも起動ログを確認できます。
+3. ログが表示されない場合は、**監視 → App Serviceログ（App Service logs）**で、利用可能なアプリケーションログのファイルシステム出力を有効にして保存します。
+4. 起動ログを取り直す必要がある場合は、承認処理の途中でないことを確認し、**概要 → 再起動（Restart）**を実行してログストリームを開き直します。
 
-デプロイ失敗時はDeployment Centerのログも確認します。ログ確認のために秘密鍵の内容を出力する必要はありません。
+ビルドの失敗はDeployment Center、起動後のエラーはログストリームを中心に確認します。ログ確認のために秘密鍵の内容を出力する必要はありません。
 
 **チェックポイント:** デプロイの成功と、Gunicornの起動を確認できること。
 
@@ -1187,5 +1197,8 @@ TLS検証を無効にしたり、JWT検証を飛ばして通したりしませ�
 6. [Basic認証を無効にした状態でのデプロイ](https://learn.microsoft.com/en-us/azure/app-service/configure-basic-auth-disable)
 7. [条件付きアクセスとライセンス要件](https://learn.microsoft.com/en-us/entra/identity/conditional-access/overview)
 8. [条件付きアクセスのMFAポリシーとExternal MFAの認証強度制約](https://learn.microsoft.com/en-us/entra/identity/conditional-access/policy-all-users-mfa-strength)
+9. [OpenSSL reqのオプション](https://docs.openssl.org/3.0/man1/openssl-req/)
+10. [App Serviceチーム: Azure PortalからZIPパッケージをデプロイする](https://azure.github.io/AppService/2026/07/30/quick-deploy-portal.html)
+11. [App Serviceチーム: Linux向けの新しいDeployments画面](https://azure.github.io/AppService/2026/04/06/quickdeploy.html)
 
 資料8は全ユーザー向けポリシーの解説ですが、本書のラボでは**全ユーザーに適用せず、テストグループ・テストリソースだけ**に限定します。また、同資料の注意書きどおり、External MFAにはRequire multifactor authenticationを使います。
