@@ -129,7 +129,7 @@ Azure RBACの権限とEntraディレクトリロールは別です。サブス�
 
 以降の値は**各自で作成・取得**します。サンプルコード内の既定値を流用せず、自分のホスト名、テナントID、App IDを設定し、自分の秘密鍵を生成してください。
 
-| 記号 | 内容 | 記入例 |
+| 項目名 | 内容 | 記入例 |
 |---|---|---|
 | `SubscriptionId` | AzureサブスクリプションID | 自分のサブスクリプションのGUID |
 | `ResourceGroup` | 専用リソースグループ | `rg-external-mfa-lab` |
@@ -147,17 +147,9 @@ Azure RBACの権限とEntraディレクトリロールは別です。サブス�
 >
 > 実際のホスト名にはランダムな識別子や地域名が含まれることがあります。必ずPortalの「概要」に表示された既定ドメインを使います。`AppName.azurewebsites.net` と決めつけないでください。
 
-以降のコマンドで使う変数を、PowerShellに設定します。値は各自のものに置き換えます。
+この表は、Portalで選択・入力する値や、後でコードに設定する値を整理するためのものです。**この段階ではPowerShellの変数設定は不要です。** 作成前で分からない項目は、後の手順で取得して記録してください。
 
-```powershell
-$SubscriptionId = "<YOUR-SUBSCRIPTION-ID>"
-$ResourceGroup = "rg-external-mfa-lab"
-$PlanName = "asp-external-mfa-lab"
-$AppName = "<YOUR-WEBAPP-RESOURCE-NAME>"
-$TenantId = "<YOUR-TENANT-ID>"
-```
-
-`<...>` のまま実行しないでください。新しいターミナルでは変数を設定し直す必要があります。
+PowerShellの変数が必要なテストでは、実行する箇所に設定例を記載します。説明中の `BaseUri` などの項目名を、そのままPortalへ入力しないでください。
 
 ### 2.1 テストユーザーとグループを新規作成する場合
 
@@ -205,14 +197,16 @@ $TenantId = "<YOUR-TENANT-ID>"
 
 表示位置はPortalの更新で変わる場合があります。Python 3.14が選択できない場合は、別リージョンやランタイム提供状況を確認し、別バージョンを使うならテストを再実行してください。
 
-### 3.2 ホスト名とURLを設定
+### 3.2 ホスト名とURLを記録する
 
-```powershell
-$HostName = "<COPY-THE-ACTUAL-DEFAULT-HOSTNAME>"
-$BaseUri = "https://$HostName"
-$AuthorizationEndpoint = "$BaseUri/authorize"
-$DiscoveryEndpoint = "$BaseUri/.well-known/openid-configuration"
-```
+Portalの概要から既定ドメインをコピーし、次の値をメモします。ここではPowerShellを操作する必要はありません。
+
+| 記録する値 | 作り方 |
+|---|---|
+| `HostName` | 概要に表示された既定ドメイン |
+| `BaseUri` | 既定ドメインの前に `https://` を付ける。末尾 `/` なし |
+| アプリ登録に使うURL | `BaseUri` の末尾に `/authorize` を付ける |
+| Discovery URL | `BaseUri` の末尾に `/.well-known/openid-configuration` を付ける |
 
 ホスト名には `https://` や末尾の `/` を含めません。
 
@@ -313,9 +307,7 @@ requests
    - Application (client) ID
    - Directory (tenant) ID
 
-```powershell
-$ClientId = "<YOUR-APPLICATION-CLIENT-ID>"
-```
+この段階では、Portalの値を第2章の記録に追記するだけで構いません。PowerShellの変数設定は不要です。
 
 Application Object ID、Enterprise applicationのObject ID、AzureリソースIDではありません。
 
@@ -382,14 +374,7 @@ app.config["ENTRA_CLIENT_ID"] = os.environ.get(
 
 `YOUR-...` は説明用の置き換え箇所です。必ず実際のGUIDにします。
 
-この2項目は環境変数で上書きできます。アプリ登録のObject IDは使用しません。
-
-ローカルのPowerShellにも値を設定しておきます。
-
-```powershell
-$env:ENTRA_TENANT_ID = $TenantId
-$env:ENTRA_CLIENT_ID = $ClientId
-```
+この2項目は環境変数で上書きできます。ローカルで上書きする場合の設定は第8章、App Service側の設定は第9章で説明します。アプリ登録のObject IDは使用しません。
 
 コード内の既定値も置き換えておくことで、環境変数を設定し忘れて別の環境を参照する事故を防ぎます。
 
@@ -484,6 +469,24 @@ openssl x509 -in .\cert.pem -noout -subject -issuer -dates
 
 <a id="local-tests"></a>
 ## 8. ローカルで検証する
+
+### テスト前の設定確認（環境変数による上書きは任意）
+
+第6章でコード内のテナントIDとClient IDの既定値を自分の値に変更済みなら、環境変数を追加設定する必要はありません。
+
+ローカルの環境変数で上書きしたい場合だけ、**この後に自動テストやFlaskを起動するPowerShell**で次を実行します。新しいターミナルの場合は、`$TenantId` と `$ClientId` も自分の値に設定し直してください。
+
+```powershell
+$TenantId = "<YOUR-TENANT-ID>"
+$ClientId = "<YOUR-APPLICATION-CLIENT-ID>"
+$env:ENTRA_TENANT_ID = $TenantId
+$env:ENTRA_CLIENT_ID = $ClientId
+```
+
+- `<...>` を実際のGUIDに置き換えます。
+- 環境変数はコード内の既定値より優先されます。以前の検証値を同じターミナルに設定している場合は、その値にも注意してください。
+- この設定は現在のPowerShellと、そこから起動するPythonプロセスに適用されます。別のターミナルやAzureには引き継がれません。
+- Azure側の環境変数は、第9章でApp ServiceのPortal画面から設定します。
 
 ### 8.1 自動テスト
 
@@ -1011,9 +1014,11 @@ MicrosoftのExternal MFA仕様では、ヒントは期限切れ状態で発行�
 
 以下は観察用の任意手順です。取得した返却トークンを、保護されたローカルファイル `returned-id-token.txt` に1行で保存し、有効期間内に実行します。トークンをコマンド履歴に直接書かないためにファイルを使います。
 
-同じPowerShellで自分の `BaseUri` と `ClientId` を設定し、プロジェクトディレクトリから実行します。
+プロジェクトディレクトリのPowerShellで、以下の先頭2行を自分の値に置き換えて実行します。第10章で使ったターミナルや変数設定を引き継ぐ必要はありません。
 
 ```powershell
+$BaseUri = "https://<YOUR-ACTUAL-APP-SERVICE-HOSTNAME>"
+$ClientId = "<YOUR-APPLICATION-CLIENT-ID>"
 $env:LAB_PROVIDER_ISSUER = $BaseUri
 $env:ENTRA_CLIENT_ID = $ClientId
 
