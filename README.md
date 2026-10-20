@@ -14,6 +14,8 @@ Azure App Service（Linux）で動かし、Entraからの要求を検証した�
 
 App Service作成、アプリ登録、鍵生成、ZIPデプロイ、External MFA設定、ユーザー登録、サインインテストまでを、チェックポイント付きで説明しています。
 
+App Serviceの操作はAzure PortalのGUIで行います。Azure CLIは不要です。ローカルの準備とテストにはPowerShellを使用します。
+
 コードを取得しただけでは起動しません。各自の環境設定と、各自で生成する鍵・証明書が必要です。
 
 ## 構成
@@ -47,7 +49,8 @@ EntraでMFA要求
 - AzureサブスクリプションとLinux App Service。検証時のAzureランタイムはPython 3.14。
 - 検証用Entraテナント、テストユーザー、必要な管理権限。
 - 条件付きアクセスでMFA要求を作る場合は、適切なP1以上のライセンス。
-- ローカルのPython、PowerShell、必要に応じてAzure CLI。
+- ローカルのPython、PowerShell、Azure Portalにアクセスできるブラウザー。
+- 鍵・証明書の生成用のOpenSSL 3以降。
 - App Serviceは**1インスタンス**。一時保存先のSQLiteは分散データベースではありません。
 
 ## 設定する3項目
@@ -69,7 +72,7 @@ EntraでMFA要求
 3. `openid` / `profile` と管理者同意を設定する。
 4. コードの環境値を変更し、Python環境とRSA鍵・証明書を準備する。
 5. ローカルの自動テストとHTTP確認を行う。
-6. 各自の鍵を含む**デプロイ専用ZIP**を作り、App Serviceへデプロイする。
+6. 各自の鍵を含む**デプロイ専用ZIP**を作り、Azure PortalのDeployment Centerからアップロードする。
 7. EntraにExternal MFAを登録し、テストユーザーに認証方法を登録する。
 8. 適切なMFA要求で外部MFAを選び、ボタン承認後にサインインが継続することを確認する。
 
